@@ -1,0 +1,64 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "server.js",
+      "use": "@vercel/node",
+      "config": {
+        "includeFiles": [
+          "Config/**",
+          "Routes/**",
+          "Controllers/**",
+          "Models/**",
+          "Middleware/**",
+          "Utils/**"
+        ]
+      }
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "server.js"
+    }
+  ],
+  "env": {
+    "NODE_ENV":                "production",
+    "MONGODB_URI":             "@mongodb_uri",
+    "JWT_SECRET":              "@jwt_secret",
+    "JWT_EXPIRE":              "@jwt_expire",
+    "ADMIN_EMAIL":             "@admin_email",
+    "ADMIN_PASSWORD":          "@admin_password",
+    "CLOUDINARY_CLOUD_NAME":   "@cloudinary_cloud_name",
+    "CLOUDINARY_API_KEY":      "@cloudinary_api_key",
+    "CLOUDINARY_API_SECRET":   "@cloudinary_api_secret",
+    "CLIENT_URL":              "@client_url"
+  },
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        {
+          "key": "Access-Control-Allow-Credentials",
+          "value": "true"
+        },
+        {
+          "key": "Access-Control-Allow-Methods",
+          "value": "GET,POST,PUT,PATCH,DELETE,OPTIONS"
+        },
+        {
+          "key": "Access-Control-Allow-Headers",
+          "value": "Content-Type, Authorization"
+        },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "DENY"
+        }
+      ]
+    }
+  ]
+}

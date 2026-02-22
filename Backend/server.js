@@ -52,7 +52,7 @@ app.use(
 );
 
 // ── CORS ──────────────────────────────────────────────────────────────────────
-// Supports multiple origins: CLIENT_URL=https://a.com,https://b.com
+
 const allowedOrigins = process.env.CLIENT_URL
   .split(",")
   .map((o) => o.trim())

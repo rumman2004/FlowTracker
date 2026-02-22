@@ -269,7 +269,7 @@ const AdminLogin = () => {
                 setForm({ ...form, email: e.target.value });
                 if (errors.email) setErrors({ ...errors, email: "" });
               },
-              placeholder: "admin@flowtracker.com",
+              placeholder: "admin@example.com",
               icon:        Mail,
               error:       errors.email,
             })}

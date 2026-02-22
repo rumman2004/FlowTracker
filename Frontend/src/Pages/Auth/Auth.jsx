@@ -359,7 +359,7 @@ const Auth = () => {
                     setForm({ ...form, name: e.target.value });
                     if (errors.name) setErrors({ ...errors, name: "" });
                   }}
-                  placeholder="John Doe"
+                  placeholder="Your Name"
                   icon={User} error={errors.name}
                 />
               </div>

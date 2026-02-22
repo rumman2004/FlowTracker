@@ -1,5 +1,5 @@
 import User from "../Models/Usermodel.js";
-import generateToken from "../Utils/generateToken.js";
+import generateToken, { generateAdminToken } from "../Utils/generateToken.js";
 import crypto from "crypto";
 import dotenv from "dotenv";
 dotenv.config();
@@ -21,13 +21,13 @@ export const register = async (req, res) => {
     const user = await User.create({ name, email, password });
 
     res.status(201).json({
-      _id: user._id,
-      name: user.name,
-      email: user.email,
-      level: user.level,
-      exp: user.exp,
+      _id:        user._id,
+      name:       user.name,
+      email:      user.email,
+      level:      user.level,
+      exp:        user.exp,
       profilePic: user.profilePic,
-      token: generateToken(user._id),
+      token:      generateToken(user._id),
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -49,16 +49,16 @@ export const login = async (req, res) => {
     }
 
     res.json({
-      _id: user._id,
-      name: user.name,
-      email: user.email,
-      level: user.level,
-      exp: user.exp,
-      totalExp: user.totalExp,
+      _id:        user._id,
+      name:       user.name,
+      email:      user.email,
+      level:      user.level,
+      exp:        user.exp,
+      totalExp:   user.totalExp,
       profilePic: user.profilePic,
-      streak: user.streak,
-      theme: user.theme,
-      token: generateToken(user._id),
+      streak:     user.streak,
+      theme:      user.theme,
+      token:      generateToken(user._id),
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -66,28 +66,39 @@ export const login = async (req, res) => {
 };
 
 // @desc Admin Login
+// ✅ FIX: use generateAdminToken which embeds { email, role: "admin" }
 export const adminLogin = async (req, res) => {
   try {
     const { email, password } = req.body;
 
+    if (!email || !password) {
+      return res.status(400).json({ message: "Email and password are required" });
+    }
+
     if (
-      email !== process.env.ADMIN_EMAIL ||
+      email    !== process.env.ADMIN_EMAIL ||
       password !== process.env.ADMIN_PASSWORD
     ) {
       return res.status(401).json({ message: "Invalid admin credentials" });
     }
 
+    // ✅ Token now contains { email, role: "admin" }
+    const token = generateAdminToken(email);
+
     res.json({
+      success: true,
       isAdmin: true,
       email,
-      token: generateToken("admin", true),
+      name:  "Admin",
+      role:  "admin",
+      token,
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// @desc Forgot Password - generate token
+// @desc Forgot Password
 export const forgotPassword = async (req, res) => {
   try {
     const { email } = req.body;
@@ -102,13 +113,12 @@ export const forgotPassword = async (req, res) => {
       .createHash("sha256")
       .update(resetToken)
       .digest("hex");
-    user.resetPasswordExpire = Date.now() + 10 * 60 * 1000; // 10 min
+    user.resetPasswordExpire = Date.now() + 10 * 60 * 1000;
     await user.save();
 
-    // In production, send email. Here we return token for demo.
     res.json({
-      message: "Password reset token generated",
-      resetToken, // Remove this in production, send via email
+      message:    "Password reset token generated",
+      resetToken, // ⚠️ Remove this in production — send via email instead
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -126,18 +136,16 @@ export const resetPassword = async (req, res) => {
       .digest("hex");
 
     const user = await User.findOne({
-      resetPasswordToken: hashedToken,
-      resetPasswordExpire: { $gt: Date.now() },
+      resetPasswordToken:   hashedToken,
+      resetPasswordExpire:  { $gt: Date.now() },
     });
 
     if (!user) {
-      return res
-        .status(400)
-        .json({ message: "Invalid or expired reset token" });
+      return res.status(400).json({ message: "Invalid or expired reset token" });
     }
 
-    user.password = password;
-    user.resetPasswordToken = undefined;
+    user.password            = password;
+    user.resetPasswordToken  = undefined;
     user.resetPasswordExpire = undefined;
     await user.save();
 

@@ -9,10 +9,10 @@ import {
 
 const router = express.Router();
 
-router.post("/register", register);
-router.post("/login", login);
-router.post("/admin-login", adminLogin);
+router.post("/register",      register);
+router.post("/login",         login);
+router.post("/admin/login",   adminLogin);   // ✅ /api/auth/admin/login
 router.post("/forgot-password", forgotPassword);
-router.post("/reset-password", resetPassword);
+router.post("/reset-password",  resetPassword);
 
 export default router;

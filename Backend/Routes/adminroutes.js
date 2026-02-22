@@ -1,16 +1,18 @@
+// Routes/adminroutes.js
+
 import express from "express";
+import { isAdmin } from "../Middleware/authmiddleware.js";
 import {
-  getDashboardStats,
+  getAdminDashboard,
   getAllUsers,
   toggleUserStatus,
 } from "../Controllers/admincontroller.js";
-import { protect, adminOnly } from "../Middleware/authmiddleware.js";
 
 const router = express.Router();
 
-router.use(protect, adminOnly);
-router.get("/dashboard", getDashboardStats);
-router.get("/users", getAllUsers);
-router.patch("/users/:id/toggle", toggleUserStatus);
+// All admin routes protected by isAdmin
+router.get("/dashboard", isAdmin, getAdminDashboard);
+router.get("/users",     isAdmin, getAllUsers);
+router.patch("/users/:id/toggle", isAdmin, toggleUserStatus);
 
 export default router;

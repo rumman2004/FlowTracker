@@ -101,127 +101,95 @@ export const deleteHabit = async (req, res) => {
   }
 };
 
-// @desc    Toggle habit completion + Award/Remove EXP + Save DailyRecord in real-time
-// @route   PATCH /api/habits/:id/toggle
-// @access  Private
+// @desc  Toggle habit complete / incomplete for today
+// @route PATCH /api/habits/:id/toggle
 export const toggleHabit = async (req, res) => {
   try {
-    // 1. Find the habit
-    const habit = await Habit.findOne({
-      _id: req.params.id,
-      userId: req.user._id,
-      isActive: true,
-    });
+    const habit = await Habit.findOne({ _id: req.params.id, userId: req.user._id });
     if (!habit) {
       return res.status(404).json({ message: "Habit not found" });
     }
 
-    // 2. Find the user
-    const user = await User.findById(req.user._id);
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
+    const today     = new Date().toISOString().split("T")[0];
     const wasCompleted = habit.isCompletedToday;
 
-    // 3. Toggle habit fields
-    habit.isCompletedToday = !wasCompleted;
-    habit.completedAt = !wasCompleted ? new Date() : null;
+    // ✅ Toggle the flag
+    habit.isCompletedToday  = !wasCompleted;
+    habit.lastCompletedDate = habit.isCompletedToday ? today : null;
+    await habit.save();
 
-    if (!wasCompleted) {
-      // ── Marking DONE ──
-      habit.totalCompletions += 1;
-      habit.streak += 1;
-      if (habit.streak > habit.longestStreak) {
-        habit.longestStreak = habit.streak;
-      }
+    const user = await User.findById(req.user._id);
+
+    if (habit.isCompletedToday) {
+      // ── Completing ──────────────────────────────────────────────────────
+      user.exp      += habit.expReward;
       user.totalExp += habit.expReward;
-      user.expHistory.push({
-        exp: habit.expReward,
-        level: user.level,
-        reason: `Completed: ${habit.name}`,
-        date: new Date(),
-      });
+
+      // Level up check
+      while (user.exp >= user.level * 100) {
+        user.exp   -= user.level * 100;
+        user.level += 1;
+      }
+
+      // Streak: only increment once per day
+      const lastActive  = user.lastActiveDate
+        ? new Date(user.lastActiveDate).toISOString().split("T")[0]
+        : null;
+
+      if (lastActive !== today) {
+        user.streak       += 1;
+        user.lastActiveDate = new Date();
+      }
+
+      // Update DailyRecord
+      await DailyRecord.findOneAndUpdate(
+        { userId: user._id, date: today },
+        {
+          $inc: { completedHabits: 1 },
+          $set: { totalHabits: await Habit.countDocuments({ userId: user._id, isActive: true }) },
+        },
+        { upsert: true, new: true }
+      );
+
     } else {
-      // ── Marking UNDONE ──
-      habit.totalCompletions = Math.max(0, habit.totalCompletions - 1);
-      habit.streak = Math.max(0, habit.streak - 1);
+      // ── Un-completing ───────────────────────────────────────────────────
+      user.exp      = Math.max(0, user.exp      - habit.expReward);
       user.totalExp = Math.max(0, user.totalExp - habit.expReward);
+
+      await DailyRecord.findOneAndUpdate(
+        { userId: user._id, date: today },
+        { $inc: { completedHabits: -1 } },
+        { new: true }
+      );
     }
 
-    // 4. Recalculate level
-    const levelInfo = user.calculateLevel();
+    // Recalculate completion rate in DailyRecord
+    const record = await DailyRecord.findOne({ userId: user._id, date: today });
+    if (record) {
+      const total = await Habit.countDocuments({ userId: user._id, isActive: true });
+      record.totalHabits    = total;
+      record.completionRate = total > 0
+        ? Math.round((record.completedHabits / total) * 100)
+        : 0;
+      await record.save();
+    }
 
-    // 5. Save habit and user
-    await habit.save();
     await user.save();
 
-    // 6. ✅ Save DailyRecord in real-time
-    const todayStr = new Date().toISOString().split("T")[0]; // "YYYY-MM-DD"
-
-    // Fetch all current habits fresh to get latest completion states
-    const allHabits = await Habit.find({
-      userId: req.user._id,
-      isActive: true,
-    });
-
-    const completedHabits = allHabits.filter((h) => h.isCompletedToday);
-    const totalExpEarned = completedHabits.reduce(
-      (sum, h) => sum + (h.expReward || 0),
-      0
-    );
-    const completionRate =
-      allHabits.length > 0
-        ? Math.round((completedHabits.length / allHabits.length) * 100)
-        : 0;
-
-    // ✅ Build the snapshot as a plain array of plain objects
-    // DO NOT pass mongoose documents directly — map to plain JS objects
-    const habitsSnapshot = allHabits.map((h) => ({
-      habitId: h._id,           // ObjectId — matches schema
-      name: h.name,             // String
-      type: h.type,             // "build" | "quit"
-      isCompleted: h.isCompletedToday,  // Boolean
-      expEarned: h.isCompletedToday ? (h.expReward || 0) : 0, // Number
-    }));
-
-    // ✅ Use $set with explicit fields — avoids Mongoose stringify bug
-    await DailyRecord.findOneAndUpdate(
-      {
-        userId: req.user._id,
-        date: todayStr,
-      },
-      {
-        $set: {
-          userId: req.user._id,
-          date: todayStr,
-          habitsSnapshot,          // ✅ plain array of plain objects
-          totalHabits: allHabits.length,
-          completedHabits: completedHabits.length,
-          totalExpEarned,
-          completionRate,
-        },
-      },
-      {
-        upsert: true,
-        new: true,
-        runValidators: true,
-      }
-    );
-
-    // 7. Respond
     res.json({
-      habit,
+      habit: {
+        _id:              habit._id,
+        isCompletedToday: habit.isCompletedToday,
+      },
       user: {
-        level: user.level,
-        exp: user.exp,
+        exp:      user.exp,
         totalExp: user.totalExp,
-        expForNext: levelInfo.expForNext,
+        level:    user.level,
+        streak:   user.streak,
       },
     });
-  } catch (error) {
-    console.error("Error in toggleHabit:", error);
-    res.status(500).json({ message: "Server error while toggling habit" });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
   }
 };
 

@@ -1,82 +1,82 @@
 import cron from "node-cron";
 import Habit from "../Models/Habitmodel.js";
-import User from "../Models/Usermodel.js";
 import DailyRecord from "../Models/DailyRecordmodel.js";
+import User from "../Models/Usermodel.js";
 
 export const scheduleDailyReset = () => {
-  // Runs every day at 12:00 AM
+
+  // ── Runs every day at midnight 00:00 ─────────────────────────────────────
   cron.schedule("0 0 * * *", async () => {
-    console.log("Running daily habit reset at midnight...");
+    const today = new Date().toISOString().split("T")[0];
+    console.log(`\n🔄 [${new Date().toLocaleTimeString()}] Running daily habit reset for ${today}`);
 
     try {
-      const today = new Date();
-      const dateStr = today.toISOString().split("T")[0];
-      const yesterday = new Date(today);
+      // ✅ STEP 1: Reset isCompletedToday on ALL habits
+      const resetResult = await Habit.updateMany(
+        { isCompletedToday: true },
+        {
+          $set: {
+            isCompletedToday:    false,
+            lastCompletedDate:   null,
+          },
+        }
+      );
+      console.log(`  ✅ Reset ${resetResult.modifiedCount} habits`);
+
+      // ✅ STEP 2: Check each user's streak
+      // If they completed at least one habit yesterday, keep streak
+      // If they missed yesterday, reset streak to 0
+      const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
       const yesterdayStr = yesterday.toISOString().split("T")[0];
 
-      // Get all active users
-      const users = await User.find({ isActive: true });
+      const allUsers = await User.find({ isActive: true });
 
-      for (const user of users) {
-        const habits = await Habit.find({ userId: user._id, isActive: true });
+      for (const user of allUsers) {
+        const yesterdayRecord = await DailyRecord.findOne({
+          userId: user._id,
+          date:   yesterdayStr,
+        });
 
-        if (habits.length === 0) continue;
+        const completedYesterday =
+          yesterdayRecord && yesterdayRecord.completedHabits > 0;
 
-        // Save yesterday's record before resetting
-        const completed = habits.filter((h) => h.isCompletedToday);
-        const totalExpEarned = completed.reduce((sum, h) => sum + h.expReward, 0);
-
-        await DailyRecord.findOneAndUpdate(
-          { userId: user._id, date: yesterdayStr },
-          {
-            userId: user._id,
-            date: yesterdayStr,
-            habitsSnapshot: habits.map((h) => ({
-              habitId: h._id,
-              name: h.name,
-              type: h.type,
-              isCompleted: h.isCompletedToday,
-              expEarned: h.isCompletedToday ? h.expReward : 0,
-            })),
-            totalHabits: habits.length,
-            completedHabits: completed.length,
-            totalExpEarned,
-            completionRate:
-              habits.length > 0
-                ? Math.round((completed.length / habits.length) * 100)
-                : 0,
-          },
-          { upsert: true, new: true }
-        );
-
-        // Update streak
-        const lastDate = user.lastActiveDate
-          ? new Date(user.lastActiveDate).toISOString().split("T")[0]
-          : null;
-
-        if (completed.length > 0) {
-          if (lastDate === yesterdayStr) {
-            user.streak += 1;
-          } else {
-            user.streak = 1;
-          }
-          user.lastActiveDate = yesterday;
-        } else {
-          user.streak = 0;
+        if (!completedYesterday && user.streak > 0) {
+          await User.findByIdAndUpdate(user._id, { $set: { streak: 0 } });
+          console.log(`  ⚠️  Streak reset for user: ${user.email}`);
         }
-        await user.save();
-
-        // Reset all habits
-        await Habit.updateMany(
-          { userId: user._id, isActive: true },
-          { isCompletedToday: false, completedAt: null }
-        );
       }
 
-      console.log("Daily reset completed successfully.");
-    } catch (error) {
-      console.error("Daily reset error:", error);
+      // ✅ STEP 3: Create empty DailyRecord for today for all active users
+      const activeUsers = await User.find({ isActive: true }).select("_id");
+      const bulkOps = activeUsers.map((u) => ({
+        updateOne: {
+          filter: { userId: u._id, date: today },
+          update: {
+            $setOnInsert: {
+              userId:          u._id,
+              date:            today,
+              completedHabits: 0,
+              totalHabits:     0,
+              completionRate:  0,
+            },
+          },
+          upsert: true,
+        },
+      }));
+
+      if (bulkOps.length > 0) {
+        await DailyRecord.bulkWrite(bulkOps);
+        console.log(`  ✅ Daily records initialised for ${bulkOps.length} users`);
+      }
+
+      console.log("  🎉 Daily reset complete\n");
+    } catch (err) {
+      console.error("  ❌ Daily reset failed:", err.message);
     }
+  }, {
+    timezone: "UTC", // change to your timezone e.g. "Asia/Dhaka"
   });
+
+  console.log("⏰ Daily reset scheduler registered — fires at 00:00 UTC");
 };

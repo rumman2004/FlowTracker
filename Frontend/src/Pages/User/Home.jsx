@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useAuth } from "../../Context/AuthContext.jsx";
-import { useTheme } from "../../Context/ThemeContext.jsx"; // ✅
+import { useTheme } from "../../Context/ThemeContext.jsx";
 import { getWeeklyProgress } from "../../Services/userservice.js";
 import { getTodayProgress } from "../../Services/habitservice.js";
 import API from "../../Services/api.js";
@@ -29,21 +29,16 @@ const CustomTooltip = ({ active, payload, label, dark }) => {
   return (
     <div
       style={{
-        background: dark
-          ? "rgba(15, 13, 40, 0.97)"
-          : "rgba(255, 255, 255, 0.97)",
-        border: dark
-          ? "1px solid rgba(99,102,241,0.3)"
-          : "1px solid rgba(99,102,241,0.2)",
-        borderRadius: "12px",
-        padding: "10px 14px",
+        background:     dark ? "rgba(15,13,40,0.97)"  : "rgba(255,255,255,0.97)",
+        border:         dark ? "1px solid rgba(99,102,241,0.3)" : "1px solid rgba(99,102,241,0.2)",
+        borderRadius:   "12px",
+        padding:        "10px 14px",
         backdropFilter: "blur(20px)",
-        boxShadow: "0 8px 32px rgba(0,0,0,0.15)",
+        boxShadow:      "0 8px 32px rgba(0,0,0,0.15)",
       }}
     >
       <p style={{
-        fontSize: "11px",
-        fontWeight: 600,
+        fontSize: "11px", fontWeight: 600,
         color: dark ? "#e2e8f0" : "#1e293b",
         marginBottom: "3px",
       }}>
@@ -59,29 +54,29 @@ const CustomTooltip = ({ active, payload, label, dark }) => {
 // ─── Main Component ───────────────────────────────────────────────────────────
 const Home = () => {
   const { user, updateUser } = useAuth();
-  const { isDark } = useTheme(); // ✅
+  const { isDark }           = useTheme();
 
-  const [todayData,   setTodayData]   = useState(null);
-  const [weeklyData,  setWeeklyData]  = useState([]);
-  const [loading,     setLoading]     = useState(true);
-  const [togglingId,  setTogglingId]  = useState(null);
-  const [expPopups,   setExpPopups]   = useState([]);
+  const [todayData,  setTodayData]  = useState(null);
+  const [weeklyData, setWeeklyData] = useState([]);
+  const [loading,    setLoading]    = useState(true);
+  const [togglingId, setTogglingId] = useState(null);
+  const [expPopups,  setExpPopups]  = useState([]);
   const popupRef = useRef(0);
 
-  // ── Theme tokens ─────────────────────────────────────────────────────────
-  const textPrimary   = isDark ? "#f1f5f9"              : "#0f172a";
-  const textSecondary = isDark ? "#94a3b8"              : "#64748b";
-  const cardBg        = isDark ? "rgba(255,255,255,0.04)": "rgba(255,255,255,0.8)";
-  const cardBorder    = isDark ? "rgba(255,255,255,0.08)": "rgba(0,0,0,0.08)";
-  const gridStroke    = isDark ? "rgba(99,102,241,0.1)"  : "rgba(99,102,241,0.12)";
-  const tickFill      = isDark ? "#64748b"               : "#94a3b8";
-  const habitRowDone  = isDark ? "rgba(16,185,129,0.08)" : "rgba(16,185,129,0.07)";
-  const habitRowIdle  = isDark ? "rgba(255,255,255,0.03)": "rgba(0,0,0,0.02)";
-  const habitBorderDone   = isDark ? "rgba(16,185,129,0.3)" : "rgba(16,185,129,0.3)";
-  const habitBorderHover  = isDark ? "rgba(99,102,241,0.3)"  : "rgba(99,102,241,0.25)";
+  // ── Theme tokens ────────────────────────────────────────────────────────
+  const textPrimary       = isDark ? "#f1f5f9"               : "#0f172a";
+  const textSecondary     = isDark ? "#94a3b8"               : "#64748b";
+  const cardBg            = isDark ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.8)";
+  const cardBorder        = isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)";
+  const gridStroke        = isDark ? "rgba(99,102,241,0.1)"   : "rgba(99,102,241,0.12)";
+  const tickFill          = isDark ? "#64748b"                : "#94a3b8";
+  const habitRowDone      = isDark ? "rgba(16,185,129,0.08)"  : "rgba(16,185,129,0.07)";
+  const habitRowIdle      = isDark ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.02)";
+  const habitBorderDone   = isDark ? "rgba(16,185,129,0.3)"   : "rgba(16,185,129,0.3)";
+  const habitBorderHover  = isDark ? "rgba(99,102,241,0.3)"   : "rgba(99,102,241,0.25)";
 
-  // ── Fetch ────────────────────────────────────────────────────────────────
-  const fetchData = async () => {
+  // ── Fetch — wrapped in useCallback so effects can depend on it ───────────
+  const fetchData = useCallback(async () => {
     try {
       const [todayRes, weeklyRes] = await Promise.all([
         getTodayProgress(),
@@ -95,25 +90,75 @@ const Home = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  useEffect(() => { fetchData(); }, []);
+  // ── Initial fetch ────────────────────────────────────────────────────────
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  // ── Midnight auto-refresh ────────────────────────────────────────────────
+  // When the clock hits 00:00 the backend scheduler has already reset
+  // isCompletedToday → false on every habit, so a fresh fetch is all we need
+  // to make habits selectable again without requiring a page reload.
+  useEffect(() => {
+    let dailyInterval = null;
+
+    const scheduleNextMidnight = () => {
+      const now      = new Date();
+      const midnight = new Date();
+      // next 00:00:05 — 5-second buffer so the cron job finishes first
+      midnight.setHours(24, 0, 5, 0);
+      const msUntilMidnight = midnight.getTime() - now.getTime();
+
+      console.log(
+        `⏰ Habit reset auto-refresh in ${Math.round(msUntilMidnight / 1000 / 60)} min`
+      );
+
+      const midnightTimer = setTimeout(async () => {
+        console.log("🔄 Midnight — refreshing habits...");
+        // Force loading spinner so the user sees fresh data
+        setLoading(true);
+        await fetchData();
+
+        // After the first midnight hit, refresh every 24 h
+        dailyInterval = setInterval(async () => {
+          setLoading(true);
+          await fetchData();
+        }, 24 * 60 * 60 * 1000);
+      }, msUntilMidnight);
+
+      // Clean up both the timeout and any interval that was already running
+      return midnightTimer;
+    };
+
+    const timer = scheduleNextMidnight();
+
+    return () => {
+      clearTimeout(timer);
+      if (dailyInterval) clearInterval(dailyInterval);
+    };
+  }, [fetchData]); // fetchData is stable (useCallback with no deps)
 
   // ── Toggle habit ─────────────────────────────────────────────────────────
   const handleToggle = async (habitId) => {
     if (togglingId === habitId) return;
+
     const habitBefore = todayData?.habits?.find((h) => h._id === habitId);
     if (!habitBefore) return;
 
     setTogglingId(habitId);
     try {
       const { data } = await API.patch(`/habits/${habitId}/toggle`);
+
       updateUser({
         level:    data.user.level,
         exp:      data.user.exp,
         totalExp: data.user.totalExp,
+        streak:   data.user.streak,
       });
 
+      // ✅ Show +EXP popup only when completing (not un-completing)
       if (!habitBefore.isCompletedToday) {
         const id = ++popupRef.current;
         setExpPopups((prev) => [...prev, { id, text: `+${habitBefore.expReward} EXP` }]);
@@ -131,9 +176,9 @@ const Home = () => {
     }
   };
 
-  // ── Derived ──────────────────────────────────────────────────────────────
-  const level      = user?.level    || 1;
-  const exp        = user?.exp      || 0;
+  // ── Derived values ───────────────────────────────────────────────────────
+  const level      = user?.level || 1;
+  const exp        = user?.exp   || 0;
   const expForNext = level * 100;
 
   const greeting =
@@ -141,7 +186,7 @@ const Home = () => {
     : new Date().getHours() < 18 ? "Good Afternoon"
     : "Good Evening";
 
-  // ── Loading ──────────────────────────────────────────────────────────────
+  // ── Loading state ────────────────────────────────────────────────────────
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -153,25 +198,22 @@ const Home = () => {
     );
   }
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  // ── Render ───────────────────────────────────────────────────────────────
   return (
     <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-5 pb-24 md:pb-6">
 
-      {/* ── EXP Popups ──────────────────────────────────────────────────── */}
+      {/* ── EXP Popups ────────────────────────────────────────────────── */}
       <div className="fixed top-20 right-6 z-50 flex flex-col gap-2 pointer-events-none">
         {expPopups.map((popup) => (
           <div
             key={popup.id}
-            className="exp-popup flex items-center gap-2 px-4 py-2
-                       rounded-xl text-sm font-bold"
+            className="exp-popup flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold"
             style={{
-              background: isDark
-                ? "rgba(99,102,241,0.2)"
-                : "rgba(99,102,241,0.12)",
-              border: "1px solid rgba(99,102,241,0.3)",
+              background:     isDark ? "rgba(99,102,241,0.2)" : "rgba(99,102,241,0.12)",
+              border:         "1px solid rgba(99,102,241,0.3)",
               backdropFilter: "blur(12px)",
-              color: isDark ? "#a5b4fc" : "#4f46e5",
-              boxShadow: "0 8px 24px rgba(99,102,241,0.2)",
+              color:          isDark ? "#a5b4fc" : "#4f46e5",
+              boxShadow:      "0 8px 24px rgba(99,102,241,0.2)",
             }}
           >
             <Zap className="w-4 h-4" />
@@ -180,7 +222,7 @@ const Home = () => {
         ))}
       </div>
 
-      {/* ── Header ──────────────────────────────────────────────────────── */}
+      {/* ── Header ────────────────────────────────────────────────────── */}
       <div className="fade-up flex items-start justify-between">
         <div>
           <p className="text-sm font-medium" style={{ color: textSecondary }}>
@@ -201,29 +243,25 @@ const Home = () => {
           </h1>
         </div>
         <div
-          className="level-badge px-3 py-1.5 rounded-xl text-sm font-bold
-                     text-white flex-shrink-0"
+          className="level-badge px-3 py-1.5 rounded-xl text-sm font-bold text-white flex-shrink-0"
           style={{ background: "linear-gradient(135deg, #6366f1, #8b5cf6)" }}
         >
           Lv. {level}
         </div>
       </div>
 
-      {/* ── Level / EXP Hero Card ────────────────────────────────────────── */}
+      {/* ── Level / EXP Hero Card ─────────────────────────────────────── */}
       <div
         className="liquid-glass liquid-glass-shimmer p-5 fade-up stagger-1"
         style={{
-          background:
-            "linear-gradient(135deg, rgba(99,102,241,0.85), rgba(139,92,246,0.85))",
-          border: "1px solid rgba(255,255,255,0.2)",
-          boxShadow: "0 20px 60px rgba(99,102,241,0.3)",
+          background: "linear-gradient(135deg, rgba(99,102,241,0.85), rgba(139,92,246,0.85))",
+          border:     "1px solid rgba(255,255,255,0.2)",
+          boxShadow:  "0 20px 60px rgba(99,102,241,0.3)",
         }}
       >
         <div className="flex justify-between items-start mb-4">
           <div>
-            <p className="text-indigo-100 text-sm font-medium">
-              Total Experience
-            </p>
+            <p className="text-indigo-100 text-sm font-medium">Total Experience</p>
             <p className="text-3xl font-black text-white mt-0.5">
               {(user?.totalExp ?? 0).toLocaleString()}
               <span className="text-lg text-indigo-200 ml-1">EXP</span>
@@ -244,7 +282,7 @@ const Home = () => {
         </div>
       </div>
 
-      {/* ── Stat Cards ──────────────────────────────────────────────────── */}
+      {/* ── Stat Cards ────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 fade-up stagger-2">
         <StatCard
           title="Today"
@@ -280,12 +318,12 @@ const Home = () => {
         />
       </div>
 
-      {/* ── Today's Habits ───────────────────────────────────────────────── */}
+      {/* ── Today's Habits ────────────────────────────────────────────── */}
       <div
         className="p-5 rounded-2xl fade-up stagger-3"
         style={{
-          background: cardBg,
-          border: `1px solid ${cardBorder}`,
+          background:     cardBg,
+          border:         `1px solid ${cardBorder}`,
           backdropFilter: "blur(12px)",
         }}
       >
@@ -338,11 +376,7 @@ const Home = () => {
                               ${isToggling ? "opacity-60 cursor-wait" : ""}`}
                   style={{
                     background: habit.isCompletedToday ? habitRowDone : habitRowIdle,
-                    border: `1px solid ${
-                      habit.isCompletedToday
-                        ? habitBorderDone
-                        : "transparent"
-                    }`,
+                    border:     `1px solid ${habit.isCompletedToday ? habitBorderDone : "transparent"}`,
                     animationDelay: `${i * 0.05}s`,
                   }}
                   onMouseEnter={(e) => {
@@ -358,11 +392,7 @@ const Home = () => {
                   <button
                     className="habit-check-btn flex-shrink-0"
                     disabled={isToggling}
-                    aria-label={
-                      habit.isCompletedToday
-                        ? "Mark as incomplete"
-                        : "Mark as complete"
-                    }
+                    aria-label={habit.isCompletedToday ? "Mark as incomplete" : "Mark as complete"}
                   >
                     {habit.isCompletedToday ? (
                       <CheckCircle2
@@ -379,11 +409,10 @@ const Home = () => {
 
                   {/* Habit icon bubble */}
                   <div
-                    className="w-9 h-9 rounded-xl flex items-center justify-center
-                               text-xl flex-shrink-0"
+                    className="w-9 h-9 rounded-xl flex items-center justify-center text-xl flex-shrink-0"
                     style={{
                       backgroundColor: (habit.color || "#6366f1") + "20",
-                      border: `1.5px solid ${habit.color || "#6366f1"}40`,
+                      border:          `1.5px solid ${habit.color || "#6366f1"}40`,
                     }}
                   >
                     {habit.icon || "⭐"}
@@ -394,13 +423,9 @@ const Home = () => {
                     <p
                       className="font-semibold text-sm truncate"
                       style={{
-                        color: habit.isCompletedToday
-                          ? textSecondary
-                          : textPrimary,
-                        textDecoration: habit.isCompletedToday
-                          ? "line-through"
-                          : "none",
-                        textDecorationColor: textSecondary,
+                        color:                 habit.isCompletedToday ? textSecondary : textPrimary,
+                        textDecoration:        habit.isCompletedToday ? "line-through" : "none",
+                        textDecorationColor:   textSecondary,
                       }}
                     >
                       {habit.name}
@@ -414,12 +439,10 @@ const Home = () => {
                   <div
                     className="text-xs px-2.5 py-1 rounded-lg font-medium flex-shrink-0"
                     style={{
-                      background:
-                        habit.type === "build"
-                          ? "rgba(99,102,241,0.1)"
-                          : "rgba(239,68,68,0.1)",
-                      color:
-                        habit.type === "build" ? "#6366f1" : "#ef4444",
+                      background: habit.type === "build"
+                        ? "rgba(99,102,241,0.1)"
+                        : "rgba(239,68,68,0.1)",
+                      color: habit.type === "build" ? "#6366f1" : "#ef4444",
                     }}
                   >
                     {habit.type}
@@ -431,12 +454,12 @@ const Home = () => {
         )}
       </div>
 
-      {/* ── Weekly Progress Chart ────────────────────────────────────────── */}
+      {/* ── Weekly Progress Chart ──────────────────────────────────────── */}
       <div
         className="p-5 rounded-2xl fade-up stagger-4"
         style={{
-          background: cardBg,
-          border: `1px solid ${cardBorder}`,
+          background:     cardBg,
+          border:         `1px solid ${cardBorder}`,
           backdropFilter: "blur(12px)",
         }}
       >
@@ -470,11 +493,7 @@ const Home = () => {
                   <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <CartesianGrid
-                strokeDasharray="3 3"
-                stroke={gridStroke}
-                vertical={false}
-              />
+              <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} vertical={false} />
               <XAxis
                 dataKey="date"
                 tickFormatter={(d) => {
@@ -490,7 +509,6 @@ const Home = () => {
                 axisLine={false}
                 tickLine={false}
               />
-              {/* ✅ Pass dark prop to tooltip */}
               <Tooltip content={<CustomTooltip dark={isDark} />} />
               <Area
                 type="monotone"
@@ -506,6 +524,7 @@ const Home = () => {
           </ResponsiveContainer>
         )}
       </div>
+
     </div>
   );
 };
